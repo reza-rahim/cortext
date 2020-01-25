@@ -1,0 +1,118 @@
+---
+# Source: cortex/templates/table-manager-svc.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: cortex-cortex-table-manager
+  labels:
+    chart: cortex-0.0.1
+    release: cortex
+    heritage: Helm
+    cortex: table-manager
+spec:
+  ports:
+    - port: 80
+      name: http
+      targetPort: http
+  selector:
+    app: cortex-table-manager
+    release: cortex
+
+---
+# Source: cortex/templates/table-manager-dep.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cortex-cortex-table-manager
+  labels:
+    chart: cortex-0.0.1
+    release: cortex
+    heritage: Helm
+    cortex: table-manager
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cortex-table-manager
+      release: cortex
+  template:
+    metadata:
+      labels:
+        app: cortex-table-manager
+        release: cortex
+        cortex: table-manager
+      annotations:
+        prometheus.io/port: "80"
+        prometheus.io/scrape: "true"
+        sidecar.istio.io/inject: "false"
+    spec:
+      tolerations:
+        - key: dedicated
+          operator: Equal
+          value: cortex
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: dedicated
+                operator: In
+                values:
+                - cortex
+      containers:
+      - name: table-manager
+        image: "quay.io/cortexproject/table-manager:master-79bba2f9"
+        imagePullPolicy: IfNotPresent
+        args:
+        - -server.http-listen-port=80
+        - "-dynamodb.original-table-name=cortex_original"
+        - "-dynamodb.periodic-table.inactive-read-throughput=300"
+        - "-dynamodb.periodic-table.inactive-write-throughput=1"
+
+        - "-dynamodb.periodic-table.read-throughput=300"
+        - "-dynamodb.periodic-table.write-throughput=3000"
+
+        - "-dynamodb.chunk-table.inactive-read-throughput=300"
+        - "-dynamodb.chunk-table.inactive-write-throughput=1"
+
+        - "-dynamodb.chunk-table.read-throughput=300"
+        - "-dynamodb.chunk-table.write-throughput=3000"
+
+        - -dynamodb.url=dynamodb://user:pass@cortex-cortex-dynamodb.cortex.svc.cluster.local:8000
+        - -dynamodb.chunk-table.prefix=cortex_chunks_
+        - -dynamodb.chunk-table.tag=cortex=chunks
+        - -dynamodb.chunk-table.from=2020-01-17
+        - -dynamodb.chunk-table.period=168h
+        - -dynamodb.periodic-table.prefix=cortex_weekly_
+        - -dynamodb.periodic-table.tag=cortex=periodic-table
+        - -dynamodb.periodic-table.from=2020-01-17
+        - -dynamodb.periodic-table.period=168h
+        - -dynamodb.v6-schema-from=2020-01-17
+        - -dynamodb.v9-schema-from=2020-01-17
+        - -dynamodb.use-periodic-tables
+        ports:
+        - containerPort: 80
+          name: http
+        env:
+          - name: AWS_DEFAULT_REGION
+          
+            valueFrom:
+              secretKeyRef:
+                name: cortex-aws-creds
+                key: AWS_DEFAULT_REGION
+          - name: USER_NAME
+            valueFrom:
+              secretKeyRef:
+                name: cortex-aws-creds
+                key: USER_NAME
+          - name: USER_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: cortex-aws-creds
+                key: USER_PASSWORD
+        resources:
+          limits:
+            cpu: 200m
+          requests:
+            cpu: 200m
+            memory: 256Mi
