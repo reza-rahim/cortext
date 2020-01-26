@@ -1,0 +1,21 @@
+---
+# Source: cortex/templates/ingester-svc.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: cortex-cortex-ingester
+  labels:
+    chart: cortex-0.0.1
+    release: cortex
+    heritage: Helm
+    cortex: ingester
+spec:
+  ports:
+    - port: 80
+      name: http
+      targetPort: http
+  selector:
+    app: cortex-ingester
+    release: cortex
+---
+

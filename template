@@ -1,0 +1,1477 @@
+---
+# Source: cortex/charts/memcached-index-read/templates/pdb.yaml
+apiVersion: policy/v1beta1
+kind: PodDisruptionBudget
+metadata:
+  name: cortex-memcached-index-read
+spec:
+  selector:
+    matchLabels:
+      app: cortex-memcached-index-read
+      chart: "memcached-index-read-2.6.0"
+      release: "cortex"
+      heritage: "Helm"
+  minAvailable: 1
+---
+# Source: cortex/charts/memcached-index-write/templates/pdb.yaml
+apiVersion: policy/v1beta1
+kind: PodDisruptionBudget
+metadata:
+  name: cortex-memcached-index-write
+spec:
+  selector:
+    matchLabels:
+      app: cortex-memcached-index-write
+      chart: "memcached-index-write-2.6.0"
+      release: "cortex"
+      heritage: "Helm"
+  minAvailable: 1
+---
+# Source: cortex/charts/memcached/templates/pdb.yaml
+apiVersion: policy/v1beta1
+kind: PodDisruptionBudget
+metadata:
+  name: cortex-memcached
+spec:
+  selector:
+    matchLabels:
+      app: cortex-memcached
+      chart: "memcached-2.6.0"
+      release: "cortex"
+      heritage: "Helm"
+  minAvailable: 1
+---
+# Source: cortex/templates/nginx-config.yaml
+kind: ConfigMap
+apiVersion: v1
+metadata:
+  name: cortex-cortex-nginx
+  labels:
+    chart: cortex-0.0.1
+    release: cortex
+    heritage: Helm
+    app: cortex-nginx
+    cortex: nginx
+data:
+  nginx.conf: |-
+    worker_processes  5;  ## Default: 1
+    error_log  /dev/stderr;
+    pid        /tmp/nginx.pid;
+    worker_rlimit_nofile 8192;
+
+    events {
+      worker_connections  4096;  ## Default: 1024
+    }
+
+    http {
+      default_type application/octet-stream;
+      log_format   main '$remote_addr - $remote_user [$time_local]  $status '
+        '"$request" $body_bytes_sent "$http_referer" '
+        '"$http_user_agent" "$http_x_forwarded_for"';
+      access_log   /dev/stderr  main;
+      sendfile     on;
+      tcp_nopush   on;
+      resolver kube-dns.kube-system.svc.cluster.local;
+
+      server { # simple reverse-proxy
+        listen 80;
+        proxy_set_header X-Scope-OrgID 0;
+
+        # pass requests for dynamic content to rails/turbogears/zope, et al
+        location = /api/prom/push {
+          proxy_pass      http://cortex-cortex-distributor.cortex.svc.cluster.local$request_uri;
+        }
+
+        location ~ /api/prom/.* {
+          proxy_pass      http://cortex-cortex-querier.cortex.svc.cluster.local$request_uri;
+        }
+      }
+    }
+---
+# Source: cortex/templates/retrieval-config.yaml
+kind: ConfigMap
+apiVersion: v1
+metadata:
+  name: cortex-cortex-retrieval-config
+  labels:
+    chart: cortex-0.0.1
+    release: cortex
+    heritage: Helm
+    cortex: retrieval
+data:
+  prometheus.yml: |-
+    global:
+      scrape_interval: 30s # By default. scrape targets every 15 seconds.
+
+    remote_write:
+      url: http://cortex-cortex-nginx.cortex.svc.cluster.local:80/api/prom/push
+
+    scrape_configs:
+    - job_name: 'kubernetes-pods'
+      kubernetes_sd_configs:
+        - role: pod
+
+      tls_config:
+        ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+      bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+
+      # You can specify the following annotations (on pods):
+      #   prometheus.io.scrape: false - don't scrape this pod
+      #   prometheus.io.scheme: https - use https for scraping
+      #   prometheus.io.port - scrape this port
+      #   prometheus.io.path - scrape this path
+      relabel_configs:
+
+      # Always use HTTPS for the api server
+      - source_labels: [__meta_kubernetes_service_label_component]
+        regex: apiserver
+        action: replace
+        target_label: __scheme__
+        replacement: https
+
+      # Drop anything annotated with prometheus.io.scrape=false
+      - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+        action: drop
+        regex: false
+
+      # Drop any endpoint who's pod port name ends with -noscrape
+      - source_labels: [__meta_kubernetes_pod_container_port_name]
+        action: drop
+        regex: .*-noscrape
+
+      # Allow pods to override the scrape scheme with prometheus.io.scheme=https
+      - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scheme]
+        action: replace
+        target_label: __scheme__
+        regex: ^(https?)$
+        replacement: $1
+
+      # Allow service to override the scrape path with prometheus.io.path=/other_metrics_path
+      - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+        action: replace
+        target_label: __metrics_path__
+        regex: ^(.+)$
+        replacement: $1
+
+      # Allow services to override the scrape port with prometheus.io.port=1234
+      - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+        action: replace
+        target_label: __address__
+        regex: (.+?)(\:\d+)?;(\d+)
+        replacement: $1:$3
+
+      # Drop pods without a name label
+      - source_labels: [__meta_kubernetes_pod_label_name]
+        action: drop
+        regex: ^$
+
+      # Rename jobs to be <namespace>.<name, from pod name label>
+      - source_labels: [__meta_kubernetes_namespace, __meta_kubernetes_pod_label_name]
+        action: replace
+        separator: /
+        target_label: job
+        replacement: $1
+
+      # Rename instances to be the pod name
+      - source_labels: [__meta_kubernetes_pod_name]
+        action: replace
+        target_label: instance
+
+      # Include node name as a extra field
+      - source_labels: [__meta_kubernetes_pod_node_name]
+        target_label: node
+
+    # This scrape config gather all nodes
+    - job_name: 'kubernetes-nodes'
+      kubernetes_sd_configs:
+        - role: node
+
+      # couldn't get prometheus to validate the kublet cert for scraping, so don't bother for now
+      tls_config:
+        insecure_skip_verify: true
+      bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+
+      relabel_configs:
+      - target_label: __scheme__
+        replacement: https
+      - source_labels: [__meta_kubernetes_node_label_kubernetes_io_hostname]
+        target_label: instance
+
+    # This scrape config just pulls in the default/kubernetes service
+    - job_name: 'kubernetes-service'
+      kubernetes_sd_configs:
+        - role: endpoints
+
+      tls_config:
+        insecure_skip_verify: true
+      bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+
+      relabel_configs:
+      - source_labels: [__meta_kubernetes_service_label_component]
+        regex: apiserver
+        action: keep
+
+      - target_label: __scheme__
+        replacement: https
+
+      - source_labels: []
+        target_label: job
+        replacement: default/kubernetes
+---
+# Source: cortex/templates/retrieval-clusterrolebinding.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: cortex-cortex-retrieval-sa
+  labels:
+    chart: cortex-0.0.1
+    release: cortex
+    heritage: Helm
+    cortex: retrieval
+---
+# Source: cortex/templates/retrieval-clusterrolebinding.yaml
+kind: ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: cortex-cortex-retrieval-nodes-view
+  labels:
+    chart: cortex-0.0.1
+    release: cortex
+    heritage: Helm
+    cortex: retrieval
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - nodes
+  verbs:
+  - get
+  - list
+  - watch
+---
+# Source: cortex/templates/retrieval-clusterrolebinding.yaml
+kind: ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: cortex-cortex-retrieval-nodes-view
+  labels:
+    chart: cortex-0.0.1
+    release: cortex
+    heritage: Helm
+    cortex: retrieval
+subjects:
+- kind: ServiceAccount
+  name: cortex-cortex-retrieval-sa
+  namespace: cortex
+roleRef:
+  kind: ClusterRole
+  name: cortex-cortex-retrieval-nodes-view
+  apiGroup: rbac.authorization.k8s.io
+---
+# Source: cortex/templates/retrieval-clusterrolebinding.yaml
+kind: ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: cortex-cortex-retrieval-view
+  labels:
+    chart: cortex-0.0.1
+    release: cortex
+    heritage: Helm
+    cortex: retrieval
+subjects:
+- kind: ServiceAccount
+  name: cortex-cortex-retrieval-sa
+  namespace: cortex
+roleRef:
+  kind: ClusterRole
+  name: view
+  apiGroup: rbac.authorization.k8s.io
+---
+# Source: cortex/charts/memcached-index-read/templates/svc.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: cortex-memcached-index-read
+  labels:
+    app: cortex-memcached-index-read
+    chart: "memcached-index-read-2.6.0"
+    release: "cortex"
+    heritage: "Helm"
+  annotations:
+    {}
+spec:
+  clusterIP: None
+  ports:
+  - name: memcache
+    port: 11211
+    targetPort: memcache
+  - name: metrics
+    port: 9150
+    targetPort: metrics
+  selector:
+    app: cortex-memcached-index-read
+---
+# Source: cortex/charts/memcached-index-write/templates/svc.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: cortex-memcached-index-write
+  labels:
+    app: cortex-memcached-index-write
+    chart: "memcached-index-write-2.6.0"
+    release: "cortex"
+    heritage: "Helm"
+  annotations:
+    {}
+spec:
+  clusterIP: None
+  ports:
+  - name: memcache
+    port: 11211
+    targetPort: memcache
+  - name: metrics
+    port: 9150
+    targetPort: metrics
+  selector:
+    app: cortex-memcached-index-write
+---
+# Source: cortex/charts/memcached/templates/svc.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: cortex-memcached
+  labels:
+    app: cortex-memcached
+    chart: "memcached-2.6.0"
+    release: "cortex"
+    heritage: "Helm"
+  annotations:
+    {}
+spec:
+  clusterIP: None
+  ports:
+  - name: memcache
+    port: 11211
+    targetPort: memcache
+  - name: metrics
+    port: 9150
+    targetPort: metrics
+  selector:
+    app: cortex-memcached
+---
+# Source: cortex/templates/consul-svc.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: cortex-cortex-consul
+  labels:
+    chart: cortex-0.0.1
+    release: cortex
+    heritage: Helm
+    cortex: consul
+spec:
+  ports:
+  - name: http
+    port: 8500
+  selector:
+    app: cortex-consul
+    release: cortex
+---
+# Source: cortex/templates/distributor-svc.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: cortex-cortex-distributor
+  labels:
+    chart: cortex-0.0.1
+    release: cortex
+    heritage: Helm
+    cortex: distributor
+spec:
+  ports:
+    - port: 80
+      name: http
+      targetPort: http
+  selector:
+    app: cortex-distributor
+    release: cortex
+---
+# Source: cortex/templates/dynamodb-svc.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: cortex-cortex-dynamodb
+  labels:
+    chart: cortex-0.0.1
+    release: cortex
+    heritage: Helm
+spec:
+  ports:
+    - port: 8000
+  selector:
+    app: cortex-dynamodb
+    release: cortex
+---
+# Source: cortex/templates/ingester-svc.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: cortex-cortex-ingester
+  labels:
+    chart: cortex-0.0.1
+    release: cortex
+    heritage: Helm
+    cortex: ingester
+spec:
+  ports:
+    - port: 80
+      name: http
+      targetPort: http
+  selector:
+    app: cortex-ingester
+    release: cortex
+---
+# Source: cortex/templates/nginx-svc.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: cortex-cortex-nginx
+  labels:
+    chart: cortex-0.0.1
+    release: cortex
+    heritage: Helm
+    app: cortex-nginx
+    cortex: nginx
+spec:
+  type: NodePort
+  ports:
+  - name: http
+    port: 80
+    nodePort: 30080
+  selector:
+    name: nginx
+---
+# Source: cortex/templates/querier-svc.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: cortex-cortex-querier
+  labels:
+    chart: cortex-0.0.1
+    release: cortex
+    heritage: Helm
+    cortex: querier
+spec:
+  ports:
+    - port: 80
+      name: http
+      targetPort: http
+  selector:
+    app: cortex-querier
+    release: cortex
+---
+# Source: cortex/templates/query-frontend-svc.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: cortex-cortex-query-frontend
+  labels:
+    chart: cortex-0.0.1
+    release: cortex
+    heritage: Helm
+    app: cortex-query-frontend
+    cortex: query-frontend
+spec:
+  # clusterIP: None gives a "headless" service so DNS returns all endpoints.
+  clusterIP: None
+  ports:
+    - port: 9095
+      name: grpc
+      targetPort: grpc
+    - port: 80
+      name: http
+      targetPort: http
+  selector:
+    app: cortex-query-frontend
+    release: cortex
+---
+# Source: cortex/templates/retrieval-svc.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: cortex-cortex-retrieval
+  labels:
+    chart: cortex-0.0.1
+    release: cortex
+    heritage: Helm
+    cortex: retrieval
+spec:
+  ports:
+    - port: 80
+      name: http
+      targetPort: http
+  selector:
+    app: cortex-retrieval
+    release: cortex
+---
+# Source: cortex/templates/table-manager-svc.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: cortex-cortex-table-manager
+  labels:
+    chart: cortex-0.0.1
+    release: cortex
+    heritage: Helm
+    cortex: table-manager
+spec:
+  ports:
+    - port: 80
+      name: http
+      targetPort: http
+  selector:
+    app: cortex-table-manager
+    release: cortex
+---
+# Source: cortex/templates/consul-dep.yaml
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  name: cortex-cortex-consul
+  labels:
+    chart: cortex-0.0.1
+    release: cortex
+    heritage: Helm
+    cortex: consul
+spec:
+  # Only one pod. Ingesters handle data loss well
+  replicas: 1
+  # Ensure we only have one pod running at a time.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: cortex-consul
+      release: cortex
+  template:
+    metadata:
+      labels:
+        app: cortex-consul
+        release: cortex
+        cortex: consul
+      annotations:
+        sidecar.istio.io/inject: "false"
+    spec:
+      tolerations:
+        - effect: NoSchedule
+          key: dedicated
+          operator: Equal
+          value: cortex
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: dedicated
+                operator: In
+                values:
+                - cortex
+      containers:
+      - name: consul
+        image: "consul:1.0.7"
+        imagePullPolicy: IfNotPresent
+        args:
+        - agent
+        - -ui
+        - -server
+        - -client=0.0.0.0
+        - -bootstrap
+        env:
+        - name: CHECKPOINT_DISABLE
+          value: "1"
+        ports:
+        - name: server-noscrape
+          containerPort: 8300
+        - name: serf-noscrape
+          containerPort: 8301
+        - name: client-noscrape
+          containerPort: 8400
+        - name: http-noscrape
+          containerPort: 8500
+        livenessProbe:
+          exec:
+            command:
+            - consul
+            - members
+          initialDelaySeconds: 300
+          timeoutSeconds: 5
+        resources:
+          limits:
+            cpu: 1
+          requests:
+            cpu: 1
+            memory: 512Mi
+---
+# Source: cortex/templates/distributor-dep.yaml
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  name: cortex-cortex-distributor
+  labels:
+    chart: cortex-0.0.1
+    release: cortex
+    heritage: Helm
+    cortex: distributor
+spec:
+  replicas: 1
+  strategy:
+    rollingUpdate:
+      maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: cortex-distributor
+      release: cortex
+  template:
+    metadata:
+      labels:
+        app: cortex-distributor
+        release: cortex
+        cortex: distributor
+      annotations:
+        prometheus.io/port: "80"
+        prometheus.io/scrape: "true"
+        sidecar.istio.io/inject: "false"
+    spec:
+      tolerations:
+        - effect: NoSchedule
+          key: dedicated
+          operator: Equal
+          value: cortex
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: dedicated
+                operator: In
+                values:
+                - cortex
+      containers:
+      - name: distributor
+        image: "quay.io/cortexproject/distributor:master-79bba2f9"
+        imagePullPolicy: IfNotPresent
+        args:
+        - -log.level=debug
+        - -server.http-listen-port=80
+        - -consul.hostname=cortex-cortex-consul.cortex.svc.cluster.local:8500
+        - -distributor.replication-factor=3
+        ports:
+        - containerPort: 80
+          name: http
+        resources:
+          limits:
+            cpu: 4
+          requests:
+            cpu: 4
+            memory: 4Gi
+---
+# Source: cortex/templates/dynamodb-dep.yaml
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  name: cortex-cortex-dynamodb
+  labels:
+    chart: cortex-0.0.1
+    release: cortex
+    heritage: Helm
+    cortex: dynamodb
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cortex-dynamodb
+      release: cortex
+  template:
+    metadata:
+      labels:
+        app: cortex-dynamodb
+        release: cortex
+        cortex: dynamodb
+      annotations:
+        prometheus.io.scrape: "false"
+        sidecar.istio.io/inject: "false"
+    spec:
+      tolerations:
+        - effect: NoSchedule
+          key: dedicated
+          operator: Equal
+          value: cortex
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: dedicated
+                operator: In
+                values:
+                - cortex
+      containers:
+      - name: dynamodb
+        image: "deangiberson/aws-dynamodb-local:latest"
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8000
+---
+# Source: cortex/templates/ingester-dep.yaml
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  name: cortex-cortex-ingester
+  labels:
+    chart: cortex-0.0.1
+    release: cortex
+    heritage: Helm
+    cortex: ingester
+spec:
+  replicas: 3
+
+  # Ingesters are not ready for at least 1 min
+  # after creation.  This has to be in sync with
+  # the ring timeout value, as this will stop a
+  # stampede of new ingesters if we should loose
+  # some.
+  minReadySeconds: 60
+
+  # Having maxSurge 0 and maxUnavailable 1 means
+  # the deployment will update one ingester at a time
+  # as it will have to stop one (making one unavailable)
+  # before it can start one (surge of zero)
+  strategy:
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
+
+  selector:
+    matchLabels:
+      app: cortex-ingester
+      release: cortex
+  template:
+    metadata:
+      labels:
+        app: cortex-ingester
+        release: cortex
+        cortex: ingester
+      annotations:
+        prometheus.io/port: "80"
+        prometheus.io/scrape: "true"
+        sidecar.istio.io/inject: "false"
+    spec:
+      # Give ingesters 80 minutes grace to flush chunks and exit cleanly.
+      # Service is available during this time, as long as we don't stop
+      # too many ingesters at once.
+      terminationGracePeriodSeconds: 4800
+
+      tolerations:
+        - effect: NoSchedule
+          key: dedicated
+          operator: Equal
+          value: cortex
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: dedicated
+                operator: In
+                values:
+                - cortex
+
+      containers:
+      - name: ingester
+        image: "quay.io/cortexproject/ingester:master-79bba2f9"
+        imagePullPolicy: IfNotPresent
+        args:
+        - -ingester.join-after=30s
+        - -ingester.claim-on-rollout=true
+        - -ingester.search-pending-for=5m
+        - -consul.hostname=cortex-cortex-consul.cortex.svc.cluster.local:8500
+        - -dynamodb.original-table-name=
+        - -dynamodb.url=dynamodb://user:pass@cortex-cortex-dynamodb.cortex.svc.cluster.local:8000
+
+        
+        - -s3.url=s3://$(USER_NAME):$(USER_PASSWORD)@cortex
+        
+        - -dynamodb.chunk-table.prefix=cortex_chunks_
+        - -dynamodb.chunk-table.tag=cortex=chunks
+        - -dynamodb.chunk-table.from=2019-06-05
+        - -dynamodb.chunk-table.period=168h
+        - -dynamodb.periodic-table.prefix=cortex_weekly_
+        - -dynamodb.periodic-table.tag=cortex=periodic-table
+        - -dynamodb.periodic-table.from=2019-06-05
+        - -dynamodb.periodic-table.period=168h
+        - -dynamodb.v6-schema-from=
+        - -dynamodb.v9-schema-from=2019-06-05
+        - -dynamodb.use-periodic-tables
+        - -memcached.hostname=cortex-memcached.cortex.svc.cluster.local
+        - -memcached.timeout=100ms
+        - -memcached.service=memcache # Service port name
+        - -memcached.timeout=500ms
+        - -store.index-cache-write.memcached.hostname=cortex-memcached-index-write.cortex.svc.cluster.local
+        - -store.index-cache-write.memcached.service=memcache # Service port name
+        - -store.index-cache-write.memcached.timeout=500ms
+        - -store.index-cache-read.memcached.hostname=cortex-memcached-index-read.cortex.svc.cluster.local
+        - -store.index-cache-read.memcached.service=memcache # Service port name
+        - -store.index-cache-read.memcached.timeout=500ms
+        ports:
+        - containerPort: 80
+          name: http
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 80
+          initialDelaySeconds: 15
+          timeoutSeconds: 1
+        env:
+          - name: AWS_DEFAULT_REGION
+          
+            valueFrom:
+              secretKeyRef:
+                name: cortex-aws-creds
+                key: AWS_DEFAULT_REGION
+          - name: USER_NAME
+            valueFrom:
+              secretKeyRef:
+                name: cortex-aws-creds
+                key: USER_NAME
+          - name: USER_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: cortex-aws-creds
+                key: USER_PASSWORD
+        resources:
+          limits:
+            cpu: 4
+          requests:
+            cpu: 4
+            memory: 4Gi
+---
+# Source: cortex/templates/nginx-depl.yaml
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  name: cortex-cortex-nginx
+  labels:
+    chart: cortex-0.0.1
+    release: cortex
+    heritage: Helm
+    app: cortex-nginx
+    cortex: nginx
+spec:
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        name: nginx
+        cortex: nginx
+      annotations:
+        prometheus.io.scrape: "false"
+    spec:
+      tolerations:
+        - effect: NoSchedule
+          key: dedicated
+          operator: Equal
+          value: cortex
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: dedicated
+                operator: In
+                values:
+                - cortex
+      containers:
+      - name: nginx
+        image: nginx
+        imagePullPolicy: IfNotPresent
+        ports:
+        - name: http
+          containerPort: 80
+        volumeMounts:
+        - name: config-volume
+          mountPath: /etc/nginx
+      volumes:
+        - name: config-volume
+          configMap:
+            name: cortex-cortex-nginx
+---
+# Source: cortex/templates/querier-dep.yaml
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  name: cortex-cortex-querier
+  labels:
+    chart: cortex-0.0.1
+    release: cortex
+    heritage: Helm
+    cortex: querier
+spec:
+  replicas: 1
+  strategy:
+    rollingUpdate:
+      maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: cortex-querier
+      release: cortex
+  template:
+    metadata:
+      labels:
+        app: cortex-querier
+        release: cortex
+        cortex: querier
+      annotations:
+        prometheus.io/port: "80"
+        prometheus.io/scrape: "true"
+        sidecar.istio.io/inject: "false"
+    spec:
+      tolerations:
+        - effect: NoSchedule
+          key: dedicated
+          operator: Equal
+          value: cortex
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: dedicated
+                operator: In
+                values:
+                - cortex
+      containers:
+      - name: querier
+        image: "quay.io/cortexproject/querier:master-79bba2f9"
+        imagePullPolicy: IfNotPresent
+        args:
+        - -server.http-listen-port=80
+        - -consul.hostname=cortex-cortex-consul.cortex.svc.cluster.local:8500
+        # - -querier.frontend-address=cortex-cortex-query-frontend.cortex.svc.cluster.local:9095
+        - -querier.query-ingesters-within=0
+        - -dynamodb.original-table-name=
+        - -dynamodb.url=dynamodb://user:pass@cortex-cortex-dynamodb.cortex.svc.cluster.local:8000
+        - -s3.url=s3://$(USER_NAME):$(USER_PASSWORD)@cortex
+        - -dynamodb.chunk-table.prefix=cortex_chunks_
+        - -dynamodb.chunk-table.tag=cortex=chunks
+        - -dynamodb.chunk-table.from=2019-06-05
+        - -dynamodb.chunk-table.period=168h
+        - -dynamodb.periodic-table.prefix=cortex_weekly_
+        - -dynamodb.periodic-table.tag=cortex=periodic-table
+        - -dynamodb.periodic-table.from=2019-06-05
+        - -dynamodb.periodic-table.period=168h
+        - -dynamodb.v6-schema-from=
+        - -dynamodb.v9-schema-from=2019-06-05
+        - -dynamodb.use-periodic-tables
+        - -memcached.hostname=cortex-memcached.cortex.svc.cluster.local
+        - -memcached.timeout=100ms
+        - -memcached.service=memcache # Service port name
+        - -memcached.timeout=500ms
+        - -store.index-cache-write.memcached.hostname=cortex-memcached-index-write.cortex.svc.cluster.local
+        - -store.index-cache-write.memcached.service=memcache # Service port name
+        - -store.index-cache-write.memcached.timeout=500ms
+        - -store.index-cache-read.memcached.hostname=cortex-memcached-index-read.cortex.svc.cluster.local
+        - -store.index-cache-read.memcached.service=memcache # Service port name
+        - -store.index-cache-read.memcached.timeout=500ms
+        - -distributor.replication-factor=3
+        - -querier.batch-iterators
+        - -querier.ingester-streaming
+        - -querier.max-concurrent=
+        ports:
+        - containerPort: 80
+          name: http
+        env:
+          - name: AWS_DEFAULT_REGION
+          
+            valueFrom:
+              secretKeyRef:
+                name: cortex-aws-creds
+                key: AWS_DEFAULT_REGION
+          - name: USER_NAME
+            valueFrom:
+              secretKeyRef:
+                name: cortex-aws-creds
+                key: USER_NAME
+          - name: USER_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: cortex-aws-creds
+                key: USER_PASSWORD
+        resources:
+          limits:
+            cpu: 1
+          requests:
+            cpu: 1
+            memory: 1Gi
+---
+# Source: cortex/templates/query-frontend-dep.yaml
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  name: cortex-cortex-query-frontend
+  labels:
+    chart: cortex-0.0.1
+    release: cortex
+    heritage: Helm
+    cortex: query-frontend
+spec:
+  replicas: 2
+  template:
+    metadata:
+      labels:
+        app: cortex-query-frontend
+        release: cortex
+        cortex: query-frontend
+      annotations:
+        prometheus.io/port: "80"
+        prometheus.io/scrape: "true"
+        sidecar.istio.io/inject: "false"
+    spec:
+      tolerations:
+        - effect: NoSchedule
+          key: dedicated
+          operator: Equal
+          value: cortex
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: dedicated
+                operator: In
+                values:
+                - cortex
+      containers:
+      - name: query-frontend
+        image: "quay.io/cortexproject/query-frontend:master-79bba2f9"
+        imagePullPolicy: IfNotPresent
+        args:
+        - -log.level=debug
+        - -server.http-listen-port=80
+        - -server.grpc-listen-port=9095
+        ports:
+        - containerPort: 9095
+          name: grpc
+        - containerPort: 80
+          name: http
+        resources:
+          limits:
+            cpu: 1
+          requests:
+            cpu: 1
+            memory: 1Gi
+---
+# Source: cortex/templates/retrieval-dep.yaml
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  name: cortex-cortex-retrieval
+  labels:
+    chart: cortex-0.0.1
+    release: cortex
+    heritage: Helm
+    cortex: retrieval
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cortex-retrieval
+      release: cortex
+  template:
+    metadata:
+      labels:
+        app: cortex-retrieval
+        release: cortex
+        cortex: retrieval
+      annotations:
+        prometheus.io/port: "80"
+        prometheus.io/scrape: "true"
+        sidecar.istio.io/inject: "false"
+    spec:
+      serviceAccountName: cortex-cortex-retrieval-sa
+      tolerations:
+        - effect: NoSchedule
+          key: dedicated
+          operator: Equal
+          value: cortex
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: dedicated
+                operator: In
+                values:
+                - cortex
+      containers:
+      - name: retrieval
+        image: "prom/prometheus:v1.4.1"
+        imagePullPolicy: IfNotPresent
+        args:
+        - -config.file=/etc/prometheus/prometheus.yml
+        - -web.listen-address=:80
+        ports:
+        - containerPort: 80
+          name: http
+        volumeMounts:
+        - name: config-volume
+          mountPath: /etc/prometheus
+      volumes:
+        - name: config-volume
+          configMap:
+            name: cortex-cortex-retrieval-config
+---
+# Source: cortex/templates/table-manager-dep.yaml
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  name: cortex-cortex-table-manager
+  labels:
+    chart: cortex-0.0.1
+    release: cortex
+    heritage: Helm
+    cortex: table-manager
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cortex-table-manager
+      release: cortex
+  template:
+    metadata:
+      labels:
+        app: cortex-table-manager
+        release: cortex
+        cortex: table-manager
+      annotations:
+        prometheus.io/port: "80"
+        prometheus.io/scrape: "true"
+        sidecar.istio.io/inject: "false"
+    spec:
+      tolerations:
+        - key: dedicated
+          operator: Equal
+          value: cortex
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: dedicated
+                operator: In
+                values:
+                - cortex
+      containers:
+      - name: table-manager
+        image: "quay.io/cortexproject/table-manager:master-79bba2f9"
+        imagePullPolicy: IfNotPresent
+        args:
+        - -server.http-listen-port=80
+        - "-dynamodb.original-table-name=cortex_original"
+        - "-dynamodb.periodic-table.inactive-read-throughput=300"
+        - "-dynamodb.periodic-table.inactive-write-throughput=1"
+
+        - "-dynamodb.periodic-table.read-throughput=300"
+        - "-dynamodb.periodic-table.write-throughput=3000"
+
+        - "-dynamodb.chunk-table.inactive-read-throughput=300"
+        - "-dynamodb.chunk-table.inactive-write-throughput=1"
+
+        - "-dynamodb.chunk-table.read-throughput=300"
+        - "-dynamodb.chunk-table.write-throughput=3000"
+
+        - -dynamodb.url=dynamodb://user:pass@cortex-cortex-dynamodb.cortex.svc.cluster.local:8000
+        - -dynamodb.chunk-table.prefix=cortex_chunks_
+        - -dynamodb.chunk-table.tag=cortex=chunks
+        - -dynamodb.chunk-table.from=2019-06-05
+        - -dynamodb.chunk-table.period=168h
+        - -dynamodb.periodic-table.prefix=cortex_weekly_
+        - -dynamodb.periodic-table.tag=cortex=periodic-table
+        - -dynamodb.periodic-table.from=2019-06-05
+        - -dynamodb.periodic-table.period=168h
+        - -dynamodb.v6-schema-from=
+        - -dynamodb.v9-schema-from=2019-06-05
+        - -dynamodb.use-periodic-tables
+        ports:
+        - containerPort: 80
+          name: http
+        env:
+          - name: AWS_DEFAULT_REGION
+          
+            valueFrom:
+              secretKeyRef:
+                name: cortex-aws-creds
+                key: AWS_DEFAULT_REGION
+          - name: USER_NAME
+            valueFrom:
+              secretKeyRef:
+                name: cortex-aws-creds
+                key: USER_NAME
+          - name: USER_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: cortex-aws-creds
+                key: USER_PASSWORD
+        resources:
+          limits:
+            cpu: 200m
+          requests:
+            cpu: 200m
+            memory: 256Mi
+---
+# Source: cortex/charts/memcached-index-read/templates/statefulset.yaml
+apiVersion: apps/v1beta1
+kind: StatefulSet
+metadata:
+  name: cortex-memcached-index-read
+  labels:
+    app: cortex-memcached-index-read
+    chart: "memcached-index-read-2.6.0"
+    release: "cortex"
+    heritage: "Helm"
+spec:
+  serviceName: cortex-memcached-index-read
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: cortex-memcached-index-read
+        chart: "memcached-index-read-2.6.0"
+        release: "cortex"
+        heritage: "Helm"
+    spec:
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - topologyKey: "kubernetes.io/hostname"
+            labelSelector:
+              matchLabels:
+                app:  cortex-memcached-index-read
+                release: "cortex"
+      containers:
+      - name: cortex-memcached-index-read
+        image: memcached:1.5.7-alpine
+        imagePullPolicy: ""
+        command:
+        - memcached
+        - -m 3840
+        - -o
+        - modern
+        - -v
+        - -I 32m
+        - -t 32
+        ports:
+        - name: memcache
+          containerPort: 11211
+        livenessProbe:
+          tcpSocket:
+            port: memcache
+          initialDelaySeconds: 30
+          timeoutSeconds: 5
+        readinessProbe:
+          tcpSocket:
+            port: memcache
+          initialDelaySeconds: 5
+          timeoutSeconds: 1
+        resources:
+          limit:
+            cpu: 500m
+          requests:
+            cpu: 500m
+            memory: 4Gi
+      - name: metrics
+        image: quay.io/prometheus/memcached-exporter:v0.4.1
+        imagePullPolicy: ""
+        ports:
+        - name: metrics
+          containerPort: 9150
+        resources:
+          {}
+      tolerations:
+        - effect: NoSchedule
+          key: dedicated
+          operator: Equal
+          value: cortex-memcached
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: dedicated
+                operator: In
+                values:
+                - cortex-memcached
+---
+# Source: cortex/charts/memcached-index-write/templates/statefulset.yaml
+apiVersion: apps/v1beta1
+kind: StatefulSet
+metadata:
+  name: cortex-memcached-index-write
+  labels:
+    app: cortex-memcached-index-write
+    chart: "memcached-index-write-2.6.0"
+    release: "cortex"
+    heritage: "Helm"
+spec:
+  serviceName: cortex-memcached-index-write
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: cortex-memcached-index-write
+        chart: "memcached-index-write-2.6.0"
+        release: "cortex"
+        heritage: "Helm"
+    spec:
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - topologyKey: "kubernetes.io/hostname"
+            labelSelector:
+              matchLabels:
+                app:  cortex-memcached-index-write
+                release: "cortex"
+      containers:
+      - name: cortex-memcached-index-write
+        image: memcached:1.5.7-alpine
+        imagePullPolicy: ""
+        command:
+        - memcached
+        - -m 3840
+        - -o
+        - modern
+        - -v
+        - -I 32m
+        - -t 32
+        ports:
+        - name: memcache
+          containerPort: 11211
+        livenessProbe:
+          tcpSocket:
+            port: memcache
+          initialDelaySeconds: 30
+          timeoutSeconds: 5
+        readinessProbe:
+          tcpSocket:
+            port: memcache
+          initialDelaySeconds: 5
+          timeoutSeconds: 1
+        resources:
+          limit:
+            cpu: 500m
+          requests:
+            cpu: 500m
+            memory: 4Gi
+      - name: metrics
+        image: quay.io/prometheus/memcached-exporter:v0.4.1
+        imagePullPolicy: ""
+        ports:
+        - name: metrics
+          containerPort: 9150
+        resources:
+          {}
+      tolerations:
+        - effect: NoSchedule
+          key: dedicated
+          operator: Equal
+          value: cortex-memcached
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: dedicated
+                operator: In
+                values:
+                - cortex-memcached
+---
+# Source: cortex/charts/memcached/templates/statefulset.yaml
+apiVersion: apps/v1beta1
+kind: StatefulSet
+metadata:
+  name: cortex-memcached
+  labels:
+    app: cortex-memcached
+    chart: "memcached-2.6.0"
+    release: "cortex"
+    heritage: "Helm"
+spec:
+  serviceName: cortex-memcached
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: cortex-memcached
+        chart: "memcached-2.6.0"
+        release: "cortex"
+        heritage: "Helm"
+    spec:
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - topologyKey: "kubernetes.io/hostname"
+            labelSelector:
+              matchLabels:
+                app:  cortex-memcached
+                release: "cortex"
+      containers:
+      - name: cortex-memcached
+        image: memcached:1.5.12-alpine
+        imagePullPolicy: ""
+        command:
+        - memcached
+        - -m 3840
+        - -o
+        - modern
+        - -v
+        - -t 32
+        ports:
+        - name: memcache
+          containerPort: 11211
+        livenessProbe:
+          tcpSocket:
+            port: memcache
+          initialDelaySeconds: 30
+          timeoutSeconds: 5
+        readinessProbe:
+          tcpSocket:
+            port: memcache
+          initialDelaySeconds: 5
+          timeoutSeconds: 1
+        resources:
+          limit:
+            cpu: 500m
+          requests:
+            cpu: 500m
+            memory: 4Gi
+      - name: metrics
+        image: quay.io/prometheus/memcached-exporter:v0.4.1
+        imagePullPolicy: ""
+        ports:
+        - name: metrics
+          containerPort: 9150
+        resources:
+          {}
+      tolerations:
+        - effect: NoSchedule
+          key: dedicated
+          operator: Equal
+          value: cortex-memcached
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: dedicated
+                operator: In
+                values:
+                - cortex-memcached
