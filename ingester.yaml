@@ -19,3 +19,136 @@ spec:
     release: cortex
 ---
 
+---
+# Source: cortex/templates/ingester-dep.yaml
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  name: cortex-cortex-ingester
+  labels:
+    chart: cortex-0.0.1
+    release: cortex
+    heritage: Helm
+    cortex: ingester
+spec:
+  replicas: 3
+
+  # Ingesters are not ready for at least 1 min
+  # after creation.  This has to be in sync with
+  # the ring timeout value, as this will stop a
+  # stampede of new ingesters if we should loose
+  # some.
+  minReadySeconds: 60
+
+  # Having maxSurge 0 and maxUnavailable 1 means
+  # the deployment will update one ingester at a time
+  # as it will have to stop one (making one unavailable)
+  # before it can start one (surge of zero)
+  strategy:
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
+
+  selector:
+    matchLabels:
+      app: cortex-ingester
+      release: cortex
+  template:
+    metadata:
+      labels:
+        app: cortex-ingester
+        release: cortex
+        cortex: ingester
+      annotations:
+        prometheus.io/port: "80"
+        prometheus.io/scrape: "true"
+        sidecar.istio.io/inject: "false"
+    spec:
+      # Give ingesters 80 minutes grace to flush chunks and exit cleanly.
+      # Service is available during this time, as long as we don't stop
+      # too many ingesters at once.
+      terminationGracePeriodSeconds: 4800
+
+      tolerations:
+        - effect: NoSchedule
+          key: dedicated
+          operator: Equal
+          value: cortex
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: dedicated
+                operator: In
+                values:
+                - cortex
+
+      containers:
+      - name: ingester
+        image: "quay.io/cortexproject/ingester:master-79bba2f9"
+        imagePullPolicy: IfNotPresent
+        args:
+        - -ingester.join-after=30s
+        - -ingester.claim-on-rollout=true
+        - -ingester.search-pending-for=5m
+        - -consul.hostname=cortex-cortex-consul.cortex.svc.cluster.local:8500
+        - -dynamodb.original-table-name=
+        - -dynamodb.url=dynamodb://user:pass@cortex-cortex-dynamodb.cortex.svc.cluster.local:8000
+
+        
+        - -s3.url=s3://$(USER_NAME):$(USER_PASSWORD)@cortex
+        
+        - -dynamodb.chunk-table.prefix=cortex_chunks_
+        - -dynamodb.chunk-table.tag=cortex=chunks
+        - -dynamodb.chunk-table.from=2019-06-05
+        - -dynamodb.chunk-table.period=168h
+        - -dynamodb.periodic-table.prefix=cortex_weekly_
+        - -dynamodb.periodic-table.tag=cortex=periodic-table
+        - -dynamodb.periodic-table.from=2019-06-05
+        - -dynamodb.periodic-table.period=168h
+        - -dynamodb.v6-schema-from=
+        - -dynamodb.v9-schema-from=2019-06-05
+        - -dynamodb.use-periodic-tables
+        - -memcached.hostname=cortex-memcached.cortex.svc.cluster.local
+        - -memcached.timeout=100ms
+        - -memcached.service=memcache # Service port name
+        - -memcached.timeout=500ms
+        - -store.index-cache-write.memcached.hostname=cortex-memcached-index-write.cortex.svc.cluster.local
+        - -store.index-cache-write.memcached.service=memcache # Service port name
+        - -store.index-cache-write.memcached.timeout=500ms
+        - -store.index-cache-read.memcached.hostname=cortex-memcached-index-read.cortex.svc.cluster.local
+        - -store.index-cache-read.memcached.service=memcache # Service port name
+        - -store.index-cache-read.memcached.timeout=500ms
+        ports:
+        - containerPort: 80
+          name: http
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 80
+          initialDelaySeconds: 15
+          timeoutSeconds: 1
+        env:
+          - name: AWS_DEFAULT_REGION
+          
+            valueFrom:
+              secretKeyRef:
+                name: cortex-aws-creds
+                key: AWS_DEFAULT_REGION
+          - name: USER_NAME
+            valueFrom:
+              secretKeyRef:
+                name: cortex-aws-creds
+                key: USER_NAME
+          - name: USER_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: cortex-aws-creds
+                key: USER_PASSWORD
+        #resources:
+        # limits:
+        #   cpu: 4
+        # requests:
+        #   cpu: 4
+        #   memory: 4Gi
