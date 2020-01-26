@@ -1,0 +1,127 @@
+---
+# Source: cortex/templates/querier-svc.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: cortex-cortex-querier
+  labels:
+    chart: cortex-0.0.1
+    release: cortex
+    heritage: Helm
+    cortex: querier
+spec:
+  ports:
+    - port: 80
+      name: http
+      targetPort: http
+  selector:
+    app: cortex-querier
+    release: cortex
+---
+# Source: cortex/templates/querier-dep.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cortex-cortex-querier
+  labels:
+    chart: cortex-0.0.1
+    release: cortex
+    heritage: Helm
+    cortex: querier
+spec:
+  replicas: 1
+  strategy:
+    rollingUpdate:
+      maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: cortex-querier
+      release: cortex
+  template:
+    metadata:
+      labels:
+        app: cortex-querier
+        release: cortex
+        cortex: querier
+      annotations:
+        prometheus.io/port: "80"
+        prometheus.io/scrape: "true"
+        sidecar.istio.io/inject: "false"
+    spec:
+      tolerations:
+        - effect: NoSchedule
+          key: dedicated
+          operator: Equal
+          value: cortex
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: dedicated
+                operator: In
+                values:
+                - cortex
+      containers:
+      - name: querier
+        image: "quay.io/cortexproject/querier:master-79bba2f9"
+        imagePullPolicy: IfNotPresent
+        args:
+        - -server.http-listen-port=80
+        - -consul.hostname=cortex-cortex-consul:8500
+        # - -querier.frontend-address=cortex-cortex-query-frontend:9095
+        - -querier.query-ingesters-within=0
+        - -dynamodb.original-table-name=
+        - -dynamodb.url=dynamodb://user:pass@cortex-cortex-dynamodb:8000
+        - -s3.url=s3://$(USER_NAME):$(USER_PASSWORD)@cortex
+        - -dynamodb.chunk-table.prefix=cortex_chunks_
+        - -dynamodb.chunk-table.tag=cortex=chunks
+        - -dynamodb.chunk-table.from=2019-06-05
+        - -dynamodb.chunk-table.period=168h
+        - -dynamodb.periodic-table.prefix=cortex_weekly_
+        - -dynamodb.periodic-table.tag=cortex=periodic-table
+        - -dynamodb.periodic-table.from=2020-01-17
+        - -dynamodb.periodic-table.period=168h
+        - -dynamodb.v6-schema-from=2019-01-17
+        - -dynamodb.v9-schema-from=2019-01-17
+        - -dynamodb.use-periodic-tables
+        - -memcached.hostname=cortex-memcached
+        - -memcached.timeout=100ms
+        - -memcached.service=memcache # Service port name
+        - -memcached.timeout=500ms
+        - -store.index-cache-write.memcached.hostname=cortex-memcached-index-write
+        - -store.index-cache-write.memcached.service=memcache # Service port name
+        - -store.index-cache-write.memcached.timeout=500ms
+        - -store.index-cache-read.memcached.hostname=cortex-memcached-index-read
+        - -store.index-cache-read.memcached.service=memcache # Service port name
+        - -store.index-cache-read.memcached.timeout=500ms
+        - -distributor.replication-factor=3
+        - -querier.batch-iterators
+        - -querier.ingester-streaming
+        - -querier.max-concurrent=5
+        ports:
+        - containerPort: 80
+          name: http
+        env:
+          - name: AWS_DEFAULT_REGION
+
+            valueFrom:
+              secretKeyRef:
+                name: cortex-aws-creds
+                key: AWS_DEFAULT_REGION
+          - name: USER_NAME
+            valueFrom:
+              secretKeyRef:
+                name: cortex-aws-creds
+                key: USER_NAME
+          - name: USER_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: cortex-aws-creds
+                key: USER_PASSWORD
+        #resources:
+        # limits:
+        #   cpu: 1
+        # requests:
+        #   cpu: 1
+        #   memory: 1Gi
