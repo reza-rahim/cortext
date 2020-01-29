@@ -21,6 +21,10 @@ data:
     global:
       scrape_interval: 5s
       evaluation_interval: 5s
+
+    remote_write:
+      - url: http://cortex-cortex-nginx/api/prom/push
+
     rule_files:
       - /etc/prometheus/prometheus.rules
     alerting:
@@ -151,3 +155,4 @@ data:
         - source_labels: [__meta_kubernetes_service_name]
           action: replace
           target_label: kubernetes_name
+

@@ -94,9 +94,9 @@ spec:
         - -ingester.search-pending-for=5m
         - -consul.hostname=cortex-cortex-consul:8500
         - -dynamodb.original-table-name=
-        - -dynamodb.url=dynamodb://user:pass@cortex-cortex-dynamodb:8000
+        - -dynamodb.url=dynamodb://user:pass@cortex-cortex-dynamodb.cortex.svc.cluster.local:8000
         
-        - -s3.url=s3://$(USER_NAME):$(USER_PASSWORD)@cortex
+        - -s3.url=s3://$(USER_NAME):$(USER_PASSWORD)@s3.cortex.svc.cluster.local:4569
         
         - -dynamodb.chunk-table.prefix=cortex_chunks_
         - -dynamodb.chunk-table.tag=cortex=chunks
