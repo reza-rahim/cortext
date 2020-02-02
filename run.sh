@@ -7,3 +7,7 @@ kubectl apply -f querier.yaml
 kubectl apply -f queryfrontend.yaml
 kubectl apply -f distributor.yaml 
 
+kubectl apply -f configs-db-dep.yaml 
+kubectl apply -f configs-dep.yaml 
+kubectl apply -f alertmanager-dep.yaml
+kubectl apply -f ruler.yaml 

@@ -1,0 +1,70 @@
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cortex-ruler
+spec:
+  ports:
+    - port: 80
+  selector:
+    app: cortex-ruler
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cortex-ruler
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cortex-ruler
+      release: cortex
+  template:
+    metadata:
+      labels:
+        app: cortex-ruler
+        release: cortex
+    spec:
+      tolerations:
+        - effect: NoSchedule
+          key: dedicated
+          operator: Equal
+          value: cortex
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: dedicated
+                operator: In
+                values:
+                - cortex
+      containers:
+      - name: ruler
+        image: quay.io/cortexproject/cortex:v0.4.0
+        imagePullPolicy: IfNotPresent
+        args:
+        - -target=ruler
+        - -log.level=debug
+        - -server.http-listen-port=80
+        - -ruler.configs.url=http://cortex-configs.cortex.svc.cluster.local:80
+        - -ruler.alertmanager-url=http://cortex-alertmanager.cortex.svc.cluster.local/api/prom/alertmanager/
+        - -consul.hostname=cortex-consul.cortex.svc.cluster.local:8500
+        - -cassandra.addresses=cortex-cassandra.cortex.svc.cluster.local
+        - -cassandra.keyspace=cortex
+        - -cassandra.timeout=1000ms
+        - -cassandra.replication-factor=2
+        - -chunk.storage-client=cassandra
+        - -dynamodb.periodic-table.prefix=cortex_weekly_
+        - -dynamodb.periodic-table.from=2020-01-01
+        - -dynamodb.daily-buckets-from=2020-01-01
+        - -dynamodb.base64-buckets-from=2020-01-01
+        - -dynamodb.v9-schema-from=2020-02-01
+        - -dynamodb.chunk-table.from=2020-02-01
+        - -memcached.hostname=cortex-memcached.cortex.svc.cluster.local:11211
+        - -memcached.timeout=100ms
+        - -memcached.service=memcached
+        - -distributor.replication-factor=1
+        ports:
+        - containerPort: 80

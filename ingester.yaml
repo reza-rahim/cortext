@@ -108,7 +108,7 @@ spec:
         - -dynamodb.periodic-table.tag=cortex=periodic-table
         - -dynamodb.periodic-table.from=2020-02-01
         - -dynamodb.periodic-table.period=168h
-        - -dynamodb.v6-schema-from=2020-02-01
+        #- -dynamodb.v6-schema-from=2020-02-01
         - -dynamodb.v9-schema-from=2020-02-01
         - -dynamodb.use-periodic-tables
         - -memcached.hostname=cortex-memcached.cortex.svc.cluster.local
