@@ -3,7 +3,7 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: cortex-table-manager
+  name: cortex-cortex-table-manager
   labels:
     chart: cortex-0.0.1
     release: cortex
@@ -23,7 +23,7 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: cortex-table-manager
+  name: cortex-cortex-table-manager
   labels:
     chart: cortex-0.0.1
     release: cortex
@@ -67,8 +67,8 @@ spec:
         args:
         - "-target=table-manager"
         - "-server.http-listen-port=80"
-        - "-cassandra.addresses=cortex-cassandra.cortex.svc.cluster.local"
-        - "-cassandra.keyspace=cortex"
+        - "-cassandra.addresses=cortex-cortex-dynamodb.cortex.svc.cluster.local"
+        - "-cassandra.keyspace=cortex_new"
         - "-cassandra.timeout=1000ms"
         - "-cassandra.replication-factor=2"
         - "-chunk.storage-client=cassandra"
@@ -84,6 +84,23 @@ spec:
         ports:
         - containerPort: 80
           name: http
+        env:
+          - name: AWS_DEFAULT_REGION
+          
+            valueFrom:
+              secretKeyRef:
+                name: cortex-aws-creds
+                key: AWS_DEFAULT_REGION
+          - name: USER_NAME
+            valueFrom:
+              secretKeyRef:
+                name: cortex-aws-creds
+                key: USER_NAME
+          - name: USER_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: cortex-aws-creds
+                key: USER_PASSWORD
         resources:
           limits:
             cpu: 200m

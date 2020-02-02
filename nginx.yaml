@@ -3,7 +3,7 @@
 kind: ConfigMap
 apiVersion: v1
 metadata:
-  name: cortex-cortex-nginx
+  name: cortex-nginx
   labels:
     chart: cortex-0.0.1
     release: cortex
@@ -37,11 +37,11 @@ data:
 
         # pass requests for dynamic content to rails/turbogears/zope, et al
         location = /api/prom/push {
-          proxy_pass      http://cortex-cortex-distributor.cortex.svc.cluster.local$request_uri;
+          proxy_pass      http://cortex-distributor.cortex.svc.cluster.local$request_uri;
         }
 
         location ~ /api/prom/.* {
-          proxy_pass      http://cortex-cortex-querier.cortex.svc.cluster.local$request_uri;
+          proxy_pass      http://cortex-querier.cortex.svc.cluster.local$request_uri;
         }
       }
     }
@@ -51,7 +51,7 @@ data:
 apiVersion: v1
 kind: Service
 metadata:
-  name: cortex-cortex-nginx
+  name: cortex-nginx
   labels:
     chart: cortex-0.0.1
     release: cortex
@@ -71,7 +71,7 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: cortex-cortex-nginx
+  name: cortex-nginx
   labels:
     chart: cortex-0.0.1
     release: cortex
@@ -118,5 +118,5 @@ spec:
       volumes:
         - name: config-volume
           configMap:
-            name: cortex-cortex-nginx
+            name: cortex-nginx
 

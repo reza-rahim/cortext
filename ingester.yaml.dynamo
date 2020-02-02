@@ -3,7 +3,7 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: cortex-ingester
+  name: cortex-cortex-ingester
   labels:
     chart: cortex-0.0.1
     release: cortex
@@ -24,7 +24,7 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: cortex-ingester
+  name: cortex-cortex-ingester
   labels:
     chart: cortex-0.0.1
     release: cortex
@@ -86,30 +86,28 @@ spec:
 
       containers:
       - name: ingester
-        #image: "quay.io/cortexproject/ingester:master-79bba2f9"
-        image: quay.io/cortexproject/cortex:v0.4.0
+        image: "quay.io/cortexproject/ingester:master-79bba2f9"
         imagePullPolicy: IfNotPresent
         args:
-        - -target=ingester
         - -ingester.join-after=30s
         - -ingester.claim-on-rollout=true
-        #- -ingester.search-pending-for=5m
-        - -consul.hostname=cortex-consul.cortex.svc.cluster.local:8500
-        - -cassandra.addresses=cortex-cassandra.cortex.svc.cluster.local
-        - -cassandra.keyspace=cortex
-        - -cassandra.timeout=1000ms
-        - -cassandra.replication-factor=2
-        - -chunk.storage-client=cassandra
+        - -ingester.search-pending-for=5m
+        - -consul.hostname=cortex-cortex-consul:8500
+        - -dynamodb.original-table-name=
+        - -dynamodb.url=dynamodb://user:pass@cortex-cortex-dynamodb.cortex.svc.cluster.local:8000
+        
+        - -s3.url=s3://$(USER_NAME):$(USER_PASSWORD)@s3.cortex.svc.cluster.local:4569
+        
         - -dynamodb.chunk-table.prefix=cortex_chunks_
         - -dynamodb.chunk-table.tag=cortex=chunks
-        - -dynamodb.chunk-table.from=2020-02-01
+        - -dynamodb.chunk-table.from=2020-10-17
         - -dynamodb.chunk-table.period=168h
         - -dynamodb.periodic-table.prefix=cortex_weekly_
         - -dynamodb.periodic-table.tag=cortex=periodic-table
-        - -dynamodb.periodic-table.from=2020-02-01
+        - -dynamodb.periodic-table.from=2020-01-17
         - -dynamodb.periodic-table.period=168h
-        - -dynamodb.v6-schema-from=2020-02-01
-        - -dynamodb.v9-schema-from=2020-02-01
+        - -dynamodb.v6-schema-from=2020-01-17
+        - -dynamodb.v9-schema-from=2020-01-17
         - -dynamodb.use-periodic-tables
         - -memcached.hostname=cortex-memcached.cortex.svc.cluster.local
         - -memcached.timeout=100ms
@@ -130,6 +128,23 @@ spec:
             port: 80
           initialDelaySeconds: 15
           timeoutSeconds: 1
+        env:
+          - name: AWS_DEFAULT_REGION
+          
+            valueFrom:
+              secretKeyRef:
+                name: cortex-aws-creds
+                key: AWS_DEFAULT_REGION
+          - name: USER_NAME
+            valueFrom:
+              secretKeyRef:
+                name: cortex-aws-creds
+                key: USER_NAME
+          - name: USER_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: cortex-aws-creds
+                key: USER_PASSWORD
         #resources:
         # limits:
         #   cpu: 4

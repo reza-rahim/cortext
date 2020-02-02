@@ -3,7 +3,7 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: cortex-cortex-query-frontend
+  name: cortex-query-frontend
   labels:
     chart: cortex-0.0.1
     release: cortex
@@ -28,7 +28,7 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: cortex-cortex-query-frontend
+  name: cortex-query-frontend
   labels:
     chart: cortex-0.0.1
     release: cortex
@@ -66,9 +66,11 @@ spec:
                 - cortex
       containers:
       - name: query-frontend
-        image: "quay.io/cortexproject/query-frontend:master-79bba2f9"
+        #image: "quay.io/cortexproject/query-frontend:master-79bba2f9"
+        image: quay.io/cortexproject/cortex:v0.4.0
         imagePullPolicy: IfNotPresent
         args:
+        - -target=query-frontend
         - -log.level=debug
         - -server.http-listen-port=80
         - -server.grpc-listen-port=9095

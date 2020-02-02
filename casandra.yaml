@@ -1,0 +1,63 @@
+---
+# Source: cortex/templates/cassandra-svc.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: cortex-cassandra
+  labels:
+    chart: cortex-0.0.1
+    release: cortex
+    heritage: Helm
+spec:
+  ports:
+    - port: 9042
+  selector:
+    app: cortex-cassandra
+    release: cortex
+---
+# Source: cortex/templates/cassandra-dep.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cortex-cassandra
+  labels:
+    chart: cortex-0.0.1
+    release: cortex
+    heritage: Helm
+    cortex: cassandra
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cortex-cassandra
+      release: cortex
+  template:
+    metadata:
+      labels:
+        app: cortex-cassandra
+        release: cortex
+        cortex: cassandra
+      annotations:
+        prometheus.io.scrape: "false"
+        sidecar.istio.io/inject: "false"
+    spec:
+      tolerations:
+        - effect: NoSchedule
+          key: dedicated
+          operator: Equal
+          value: cortex
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: dedicated
+                operator: In
+                values:
+                - cortex
+      containers:
+      - name: cassandra
+        image: "cassandra:3.11"
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 9042

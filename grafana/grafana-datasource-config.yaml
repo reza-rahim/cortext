@@ -13,7 +13,7 @@ data:
                 "name": "prometheus",
                 "orgId": 1,
                 "type": "prometheus",
-                "url": "http://cortex-cortex-nginx/prom/api",
+                "url": "http://cortex-nginx/api/prom",
                 "version": 1
             }
         ]

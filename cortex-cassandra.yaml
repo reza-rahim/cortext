@@ -1,0 +1,33 @@
+---
+# Source: cortex/templates/cassandra-dep.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cortex-cassandra
+  labels:
+    chart: cortex-0.0.1
+    release: cortex
+    heritage: Helm
+    cortex: cassandra
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cortex-cassandra
+      release: cortex
+  template:
+    metadata:
+      labels:
+        app: cortex-cassandra
+        release: cortex
+        cortex: cassandra
+      annotations:
+        prometheus.io.scrape: "false"
+        sidecar.istio.io/inject: "false"
+    spec:
+      containers:
+      - name: cassandra
+        image: "cassandra:3.11"
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 9042

@@ -20,3 +20,15 @@ kubectl port-forward $(kubectl  get pods -l "cortex=dynamodb" -o jsonpath='{.ite
 
 
 AWS_ACCESS_KEY_ID=user AWS_SECRET_ACCESS_KEY=pass AWS_DEFAULT_REGION=dummy aws --endpoint-url http://127.0.0.1:9090 dynamodb scan --table-name cortex_chunks_2611
+
+
+For casandra
+kubectl  exec -it $(kubectl get pod   -l app=cortex-cassandra  -o jsonpath={.items..metadata.name}) cqlsh
+
+desc keyspaces
+desc tables
+
+# for single node casandra set the replication to one
+
+ALTER KEYSPACE cortex  WITH replication = { 'class' : 'SimpleStrategy', 'replication_factor' : 1 };
+

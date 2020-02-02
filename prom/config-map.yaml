@@ -23,7 +23,7 @@ data:
       evaluation_interval: 5s
 
     remote_write:
-      - url: http://cortex-cortex-nginx/api/prom/push
+      - url: http://cortex-nginx/api/prom/push
 
     rule_files:
       - /etc/prometheus/prometheus.rules
