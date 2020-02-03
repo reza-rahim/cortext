@@ -2,7 +2,7 @@
 https://www.infracloud.io/cortex-prometheus-ha/
 
 ## label the node
-
+```bash
 kubectl label nodes ansible-3  dedicated=cortex
 kubectl label nodes ansible-4  dedicelated=cortex
 
@@ -17,7 +17,7 @@ kubectl taint nodes ansible-3  dedicated:NoSchedule-
 
 kubectl patch node ansible-4  -p '{"spec":{"taints":[]}}'
 kubectl patch node ansible-3  -p '{"spec":{"taints":[]}}'
-
+```
 ## For table manager dynamo 
 kubectl create secret generic cortex-aws-creds  --from-literal=USER_NAME=dummy --from-literal=USER_PASSWORD=user --from-literal=AWS_DEFAULT_REGION=pass
 
